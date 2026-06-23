@@ -1,13 +1,27 @@
 [gd_scene format=3 uid="uid://dh8wlvgu8wqqb"]
 
 [ext_resource type="Script" uid="uid://bparfra7mc7yk" path="res://weight.gd" id="1_7ku0b"]
+[ext_resource type="Shader" uid="uid://yi2ytkn1txam" path="res://materials/waterdrop.gdshader" id="2_oiquw"]
 
 [sub_resource type="PhysicsMaterial" id="PhysicsMaterial_m0rpm"]
 rough = true
 bounce = 0.2
 
-[sub_resource type="StandardMaterial3D" id="StandardMaterial3D_5hfv0"]
-albedo_color = Color(0.20392157, 0.76862746, 1, 1)
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_nfmdw"]
+render_priority = 0
+shader = ExtResource("2_oiquw")
+shader_parameter/color_shallow = Color(0.02, 0.18, 0.25, 1)
+shader_parameter/color_deep = Color(0.05, 0.35, 0.45, 1)
+shader_parameter/transparency = 0.57600002736
+shader_parameter/roughness = 0.05
+shader_parameter/metallic = 0.0
+shader_parameter/ior = 1.333
+shader_parameter/refraction_strength = 0.25
+shader_parameter/noise_scale = 8.0
+shader_parameter/noise_strength = 0.2
+shader_parameter/noise_speed = 0.1
+shader_parameter/absorption = 1.2
+shader_parameter/edge_darkening = 0.6
 
 [sub_resource type="SphereShape3D" id="SphereShape3D_0e071"]
 radius = 0.05
@@ -21,7 +35,7 @@ physics_material_override = SubResource("PhysicsMaterial_m0rpm")
 linear_velocity = Vector3(4, 0, 0)
 
 [node name="CSGBox3D" type="CSGSphere3D" parent="Weight" unique_id=1024082293]
-material_override = SubResource("StandardMaterial3D_5hfv0")
+material_override = SubResource("ShaderMaterial_nfmdw")
 radius = 0.1
 
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Weight" unique_id=2032173639]
@@ -32,5 +46,5 @@ wait_time = 3.0
 one_shot = true
 autostart = true
 
-[connection signal="timeout" from="DestroyTimer" to="Weight" method="_on_destroy_timer_timeout"]
 [connection signal="timeout" from="DestroyTimer" to="." method="_on_destroy_timer_timeout"]
+[connection signal="timeout" from="DestroyTimer" to="Weight" method="_on_destroy_timer_timeout"]

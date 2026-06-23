@@ -1,0 +1,34 @@
+; Engine configuration file.
+; It's best edited using the editor UI and not directly,
+; since the parameters that go here are not all obvious.
+;
+; Format:
+;   [section] ; section goes between []
+;   param=value ; assign values to parameters
+
+config_version=5
+
+[application]
+
+config/name="Build123d.gd DEMO"
+run/main_scene="uid://dplu8i0la4dd8"
+config/features=PackedStringArray("4.7", "Forward Plus")
+config/icon="res://icon.svg"
+
+[display]
+
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+
+[physics]
+
+3d/physics_engine="Rapier3D"
+rapier/solver/preset=1
+rapier/solver/num_internal_pgs_iterations=4
+rapier/solver/num_internal_stabilization_iterations=4
+rapier/solver/contact_damping_ratio=20.0
+rapier/solver/contact_natural_frequency=50.0
+
+[rendering]
+
+rendering_device/driver.windows="d3d12"

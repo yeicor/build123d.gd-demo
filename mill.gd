@@ -4,11 +4,10 @@ extends Node
 const GROUP_ORIGINAL_THREE_WAY := 0
 const GROUP_SINGLE_BODY := 1
 
-const COLOR_KEEP_SOURCE := 0
-const COLOR_NONE := 1
-const COLOR_RANDOM_PER_PART := 2
-const COLOR_RANDOM_PER_SOLID := 3
-const COLOR_RANDOM_PER_FACE := 4
+const COLOR_NONE := 0
+const COLOR_RANDOM_PER_PART := 1
+const COLOR_RANDOM_PER_SOLID := 2
+const COLOR_RANDOM_PER_FACE := 3
 
 
 @export var source_step_path: String = "res://mill.step"
@@ -24,8 +23,8 @@ var render_angular_deflection: float = 0.5
 @export var render_with_attributes: bool = true
 
 @export_group("Colors")
-@export_enum("Keep Source", "None", "Random Per Part", "Random Per Solid", "Random Per Face")
-var color_mode: int = COLOR_KEEP_SOURCE
+@export_enum("None", "Random Per Part", "Random Per Solid", "Random Per Face")
+var color_mode: int = COLOR_RANDOM_PER_PART
 @export var random_seed: int = 12345
 @export_range(0.0, 1.0, 0.01)
 var random_saturation_min: float = 0.65
@@ -58,6 +57,7 @@ var component_stats_limit: int = 20
 
 
 var _rebuilding := false
+var _rng := RandomNumberGenerator.new()
 
 
 func _do_reload() -> void:
@@ -95,20 +95,20 @@ func _do_reload() -> void:
 		var group_id := _get_group_id(i)
 		if !groups.has(group_id):
 			groups[group_id] = []
+		var c: TopoShape = components[i]
 		(groups[group_id] as Array).append({
 			"index": i,
-			"shape": components[i],
-			"com": components[i].get_center_of_mass(),
-			"type": components[i].get_shape_type_name(),
-			"geom": components[i].get_geom_type_name(),
-			"volume": components[i].get_volume(),
-			"area": components[i].get_surface_area(),
-			"has_color": components[i].has_color(),
+			"shape": c,
+			"com": c.get_center_of_mass(),
+			"type": c.get_shape_type_name(),
+			"geom": c.get_geom_type_name(),
+			"volume": c.get_volume(),
+			"area": c.get_surface_area(),
 		})
 
 	var total_parts := 0
-	for group_id_variant in groups.keys():
-		total_parts += (groups[group_id_variant] as Array).size()
+	for arr in groups.values():
+		total_parts += arr.size()
 
 	if print_component_stats:
 		_print_component_stats(components)
@@ -120,7 +120,6 @@ func _do_reload() -> void:
 	var group_stats: Array = []
 	var total_triangles := 0
 	var total_surfaces := 0
-	var source_colored_parts := 0
 	var total_volume := 0.0
 	var total_area := 0.0
 
@@ -136,15 +135,14 @@ func _do_reload() -> void:
 
 		var group_center := Vector3.ZERO
 		for p in parts:
-			group_center += -((p as Dictionary)["com"] as Vector3)
-		group_center /= float(parts.size())
+			group_center += -(p as Dictionary)["com"] as Vector3
+		group_center /= parts.size()
 
-		# This matches the original transform math.
 		var group_xf := Transform3D(Vector3.RIGHT, Vector3.UP, Vector3.BACK, group_center)
 
 		var t_group := Time.get_ticks_msec()
 
-		# Build collision FIRST so OCCT caches the coarser tessellation.
+			# Build collision FIRST so OCCT caches the coarser tessellation.
 		# The finer render tessellation below will then force a re-tessellation.
 		if generate_collision:
 			var collision_mesh := _build_collision_mesh(parts, group_xf)
@@ -172,24 +170,21 @@ func _do_reload() -> void:
 
 		body.transform = group_xf.affine_inverse()
 
-		var group_triangles := _mesh_triangle_count(render_mesh)
-		var group_surfaces := render_mesh.get_surface_count()
-		var group_volume := 0.0
+		var group_tris := _mesh_triangle_count(render_mesh)
+		var group_surfs := render_mesh.get_surface_count()
+		var group_vol := 0.0
 		var group_area := 0.0
-		var g_has_color := 0
 		for p in parts:
-			group_volume += float((p as Dictionary)["volume"])
-			group_area += float((p as Dictionary)["area"])
-			if bool((p as Dictionary)["has_color"]):
-				g_has_color += 1
+			var d: Dictionary = p
+			group_vol += float(d["volume"])
+			group_area += float(d["area"])
 
 		var group_time := Time.get_ticks_msec() - t_group
 
-		total_triangles += group_triangles
-		total_surfaces += group_surfaces
+		total_triangles += group_tris
+		total_surfaces += group_surfs
 		total_parts += parts.size()
-		source_colored_parts += g_has_color
-		total_volume += group_volume
+		total_volume += group_vol
 		total_area += group_area
 
 		if print_group_stats:
@@ -200,9 +195,9 @@ func _do_reload() -> void:
 					group_time,
 					parts.size(),
 					_get_feature_count(parts),
-					group_surfaces,
-					group_triangles,
-					group_volume,
+					group_surfs,
+					group_tris,
+					group_vol,
 					group_area,
 					group_center.x,
 					group_center.y,
@@ -213,9 +208,9 @@ func _do_reload() -> void:
 		group_stats.append({
 			"group_id": group_id,
 			"parts": parts.size(),
-			"tris": group_triangles,
-			"surfs": group_surfaces,
-			"vol": group_volume,
+			"tris": group_tris,
+			"surfs": group_surfs,
+			"vol": group_vol,
 			"area": group_area,
 			"time": group_time,
 		})
@@ -229,7 +224,6 @@ func _do_reload() -> void:
 			total_parts,
 			total_surfaces,
 			total_triangles,
-			source_colored_parts,
 			group_stats,
 			total_volume,
 			total_area,
@@ -243,20 +237,7 @@ func _do_reload() -> void:
 
 
 func _collect_components(root: TopoShape) -> Array:
-	var components: Array = []
-
-	if root.has_method("get_component_count") and root.has_method("get_component_shape"):
-		var count := int(root.get_component_count()) - 1
-		if count > 0:
-			for i in range(count):
-				var comp := root.get_component_shape(i + 1)
-				if comp is TopoShape and !(comp as TopoShape).is_null():
-					components.append(comp)
-
-	if components.is_empty():
-		components.append(root)
-
-	return components
+	return root.decompose_compound()
 
 
 func _get_group_id(i: int) -> int:
@@ -328,8 +309,8 @@ func _build_group_mesh(
 	angular_deflection: float,
 	with_attributes: bool
 ) -> ArrayMesh:
-	var final_mesh := ArrayMesh.new()
-	var use_source_attrs := with_attributes or color_mode == COLOR_KEEP_SOURCE
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
 
 	for p in parts:
 		var rec: Dictionary = p
@@ -343,18 +324,62 @@ func _build_group_mesh(
 			var feature_key := "%s|g%d|p%d|f%d" % [source_step_path, group_id, part_index, f_i]
 			var color_info := _get_feature_color(feature, part_index, f_i, feature_key)
 
-			var source_mesh := feature.to_array_mesh(linear_deflection, angular_deflection, use_source_attrs)
-			_append_transformed_mesh_surface(
-				final_mesh,
-				source_mesh,
-				group_xf,
-				color_info["apply_color"],
-				color_info["color"],
-				color_info["use_source_color"],
-				color_info["source_color"]
-			)
+			var source_mesh := feature.to_array_mesh(linear_deflection, angular_deflection)
+			_append_to_surface_tool(st, source_mesh, group_xf, color_info["apply_color"], color_info["color"])
 
-	return final_mesh
+	st.generate_normals()
+	var mesh := st.commit()
+	if mesh == null:
+		return ArrayMesh.new()
+	return mesh
+
+func _append_to_surface_tool(
+	st: SurfaceTool,
+	src: ArrayMesh,
+	xf: Transform3D,
+	apply_color: bool,
+	override_color: Color
+) -> void:
+	if src == null or src.get_surface_count() == 0:
+		return
+
+	for s in range(src.get_surface_count()):
+		var arrays: Array = src.surface_get_arrays(s)
+		if arrays.size() <= Mesh.ARRAY_VERTEX:
+			continue
+
+		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
+		if verts.is_empty():
+			continue
+
+		var idxs := PackedInt32Array()
+		if arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] is PackedInt32Array:
+			idxs = arrays[Mesh.ARRAY_INDEX]
+		if idxs.is_empty():
+			idxs.resize(verts.size())
+			for i in range(verts.size()):
+				idxs[i] = i
+
+		var uvs := PackedVector2Array()
+		if arrays.size() > Mesh.ARRAY_TEX_UV and arrays[Mesh.ARRAY_TEX_UV] is PackedVector2Array:
+			uvs = arrays[Mesh.ARRAY_TEX_UV]
+
+		for i in range(0, idxs.size(), 3):
+			if i + 2 >= idxs.size():
+				continue
+
+			for k in [0, 2, 1]: # Swap order of triangle indices
+				var vi := idxs[i + k]
+				if vi < 0 or vi >= verts.size():
+					continue
+
+				if apply_color:
+					st.set_color(override_color)
+
+				if not uvs.is_empty() and vi < uvs.size():
+					st.set_uv(uvs[vi])
+
+				st.add_vertex(xf * verts[vi])
 
 func _build_collision_mesh(parts: Array, group_xf: Transform3D) -> ArrayMesh:
 	var old_mode := color_mode
@@ -391,19 +416,11 @@ func _get_features_for_shape(shape: TopoShape) -> Array:
 func _get_feature_color(feature: TopoShape, part_index: int, feature_index: int, feature_key: String) -> Dictionary:
 	var info := {
 		"apply_color": false,
-		"use_source_color": false,
 		"color": Color.WHITE,
-		"source_color": Color.WHITE,
 	}
 
 	match color_mode:
 		COLOR_NONE:
-			return info
-
-		COLOR_KEEP_SOURCE:
-			if feature.has_color():
-				info["use_source_color"] = true
-				info["source_color"] = feature.get_color()
 			return info
 
 		COLOR_RANDOM_PER_PART:
@@ -425,91 +442,15 @@ func _get_feature_color(feature: TopoShape, part_index: int, feature_index: int,
 			return info
 
 
-func _append_transformed_mesh_surface(
-	dst: ArrayMesh,
-	src: ArrayMesh,
-	xf: Transform3D,
-	apply_color: bool,
-	override_color: Color,
-	use_source_color: bool,
-	source_color: Color
-) -> void:
-	if src == null or src.get_surface_count() == 0:
-		return
-
-	for s in range(src.get_surface_count()):
-		var arrays: Array = src.surface_get_arrays(s)
-		if arrays.size() <= Mesh.ARRAY_VERTEX:
-			continue
-
-		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		if verts.is_empty():
-			continue
-
-		var idxs := PackedInt32Array()
-		if arrays.size() > Mesh.ARRAY_INDEX and arrays[Mesh.ARRAY_INDEX] is PackedInt32Array:
-			idxs = arrays[Mesh.ARRAY_INDEX]
-		if idxs.is_empty():
-			idxs = PackedInt32Array()
-			idxs.resize(verts.size())
-			for i in range(verts.size()):
-				idxs[i] = i
-
-		var uvs := PackedVector2Array()
-		if arrays.size() > Mesh.ARRAY_TEX_UV and arrays[Mesh.ARRAY_TEX_UV] is PackedVector2Array:
-			uvs = arrays[Mesh.ARRAY_TEX_UV]
-
-		var colors := PackedColorArray()
-		if arrays.size() > Mesh.ARRAY_COLOR and arrays[Mesh.ARRAY_COLOR] is PackedColorArray:
-			colors = arrays[Mesh.ARRAY_COLOR]
-
-		var st := SurfaceTool.new()
-		st.begin(Mesh.PRIMITIVE_TRIANGLES)
-
-		for i in range(0, idxs.size(), 3):
-			if i + 2 >= idxs.size():
-				continue
-
-			for k in range(3):
-				var vi := idxs[i + k]
-				if vi < 0 or vi >= verts.size():
-					continue
-
-				if apply_color:
-					st.set_color(override_color)
-				elif use_source_color:
-					st.set_color(source_color if colors.is_empty() or vi >= colors.size() else colors[vi])
-
-				if not uvs.is_empty() and vi < uvs.size():
-					st.set_uv(uvs[vi])
-
-				st.add_vertex(xf * verts[vi])
-
-		st.generate_normals()
-		var rebuilt := st.commit()
-		if rebuilt == null:
-			continue
-
-		for rs in range(rebuilt.get_surface_count()):
-			dst.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, rebuilt.surface_get_arrays(rs))
-
 
 func _make_random_color(key: String) -> Color:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = hash(key) ^ random_seed
-
-	var s_min := minf(random_saturation_min, random_saturation_max)
-	var s_max := maxf(random_saturation_min, random_saturation_max)
-	var v_min := minf(random_value_min, random_value_max)
-	var v_max := maxf(random_value_min, random_value_max)
-	var a_min := minf(random_alpha_min, random_alpha_max)
-	var a_max := maxf(random_alpha_min, random_alpha_max)
+	_rng.seed = hash(key) ^ random_seed
 
 	return Color.from_hsv(
-		rng.randf(),
-		rng.randf_range(s_min, s_max),
-		rng.randf_range(v_min, v_max),
-		rng.randf_range(a_min, a_max)
+		_rng.randf(),
+		_rng.randf_range(minf(random_saturation_min, random_saturation_max), maxf(random_saturation_min, random_saturation_max)),
+		_rng.randf_range(minf(random_value_min, random_value_max), maxf(random_value_min, random_value_max)),
+		_rng.randf_range(minf(random_alpha_min, random_alpha_max), maxf(random_alpha_min, random_alpha_max))
 	)
 
 
@@ -534,7 +475,7 @@ func _print_component_stats(components: Array) -> void:
 	for i in range(limit):
 		var comp: TopoShape = components[i]
 		print(
-			"[C%03d] type=%s geom=%s vol=%.6f area=%.6f com=(%.6f,%.6f,%.6f) bbox=(%.6f,%.6f,%.6f) color=%s"
+			"[C%03d] type=%s geom=%s vol=%.6f area=%.6f com=(%.6f,%.6f,%.6f) bbox=(%.6f,%.6f,%.6f)"
 			% [
 				i,
 				comp.get_shape_type_name(),
@@ -547,7 +488,6 @@ func _print_component_stats(components: Array) -> void:
 				comp.get_bounding_box_size().x,
 				comp.get_bounding_box_size().y,
 				comp.get_bounding_box_size().z,
-				"yes" if comp.has_color() else "no",
 			]
 		)
 
@@ -558,7 +498,6 @@ func _print_stats(
 	total_parts: int,
 	total_surfaces: int,
 	total_triangles: int,
-	source_colored_parts: int,
 	group_stats: Array,
 	total_volume: float,
 	total_area: float,
@@ -582,7 +521,7 @@ func _print_stats(
 	var geom_hist_str := _hist_to_string(geom_hist)
 
 	print(
-		"[STEP] import=%dms collect=%dms build=%dms total=%dms comps=%d groups=%d parts=%d surfs=%d tris=%d vol=%.6f area=%.6f bbox_min=(%.6f,%.6f,%.6f) bbox_max=(%.6f,%.6f,%.6f) bbox_size=(%.6f,%.6f,%.6f) source_colored=%d color_mode=%s shapes=%s geoms=%s"
+		"[STEP] import=%dms collect=%dms build=%dms total=%dms comps=%d groups=%d parts=%d surfs=%d tris=%d vol=%.6f area=%.6f bbox_min=(%.6f,%.6f,%.6f) bbox_max=(%.6f,%.6f,%.6f) bbox_size=(%.6f,%.6f,%.6f) color_mode=%s shapes=%s geoms=%s"
 		% [
 			t_import,
 			t_collect,
@@ -598,7 +537,6 @@ func _print_stats(
 			bbox_min.x, bbox_min.y, bbox_min.z,
 			bbox_max.x, bbox_max.y, bbox_max.z,
 			bbox_size.x, bbox_size.y, bbox_size.z,
-			source_colored_parts,
 			_color_mode_string(),
 			shape_hist_str,
 			geom_hist_str
@@ -617,8 +555,6 @@ func _hist_to_string(hist: Dictionary) -> String:
 
 func _color_mode_string() -> String:
 	match color_mode:
-		COLOR_KEEP_SOURCE:
-			return "keep"
 		COLOR_NONE:
 			return "none"
 		COLOR_RANDOM_PER_PART:

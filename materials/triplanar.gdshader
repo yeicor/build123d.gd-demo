@@ -1,6 +1,7 @@
 shader_type spatial;
 
 uniform sampler2D albedo_tex : repeat_enable, filter_linear_mipmap, hint_default_white;
+uniform vec3 albedo = vec3(1.0);
 uniform sampler2D orm_tex : repeat_enable, filter_linear_mipmap, hint_default_white;
 uniform float roughness : hint_range(0.0, 1.0) = 1.0;
 uniform float metalness : hint_range(0.0, 1.0) = 0.0;
@@ -63,8 +64,8 @@ void fragment() {
 	vec3 n = normalize(my_normal);
 
 	vec3 albedo_sample = triplanar_sample(albedo_tex, n, p, blend_factor).rgb;
-	ALBEDO *= albedo_sample * 0.3;
-	ALBEDO *= COLOR.rgb;
+	ALBEDO *= albedo_sample;
+	ALBEDO *= COLOR.rgb * albedo;
 
 	vec3 orm = triplanar_sample(orm_tex, n, p, blend_factor).rgb;
 	ROUGHNESS = orm.g * roughness;
